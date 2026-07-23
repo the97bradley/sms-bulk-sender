@@ -1,85 +1,53 @@
-# Denver PorchFest SMS Bulk Sender
+# SMS Bulk Sender
 
-Standalone command-line tool for sending carefully reviewed SMS blasts through
-InfiniReach. Its current recipient source is the Denver PorchFest artist
-confirmation Google Sheet.
+Android Flutter app that imports a personalized SMS queue from CSV and sends
+each row from the phone's SIM with a configurable delay.
 
-The tool is safe by default:
+This app does not use InfiniReach, Twilio, or another SMS API.
 
-- It reads Google Sheets with a read-only OAuth scope.
-- It includes only rows whose availability answer starts with `Yes`.
-- It validates and deduplicates US phone numbers.
-- It performs a dry run unless `--send` is supplied.
-- Live sends require `--confirm-count` to match the final recipient count.
-- It verifies that the configured Android sender is online and SMS-ready.
-- It writes a local, gitignored JSONL result log.
+## CSV format
 
-## Setup
+The CSV must be UTF-8 and contain exactly two columns in this order:
 
-Python 3.11 or newer is required.
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
+```csv
+phone number,message
++13035551212,"Your custom message, including commas if needed."
+7205551212,Another recipient gets a different message.
 ```
 
-Set these secrets in your shell or runtime secret manager:
+The importer:
+
+- requires the `phone number,message` header;
+- supports quoted commas and multiline messages;
+- rejects blank messages and malformed phone numbers;
+- preserves every valid row, including repeated phone numbers;
+- shows the complete queue for review before sending.
+
+## Use
+
+1. Install the app on an Android phone with an active SIM.
+2. Tap **Import CSV** and choose the file.
+3. Set the delay in seconds.
+4. Review every phone number and message.
+5. Tap **Send**, confirm the count, and grant Android's SMS permission.
+6. Leave the app open until the queue finishes. Tap **Stop** to stop before the
+   next row.
+
+Long messages are sent as multipart SMS. A green check means Android accepted
+the send request; it is not a carrier delivery receipt.
+
+## Development
+
+Requires Flutter with Dart 3.12 or newer:
 
 ```bash
-export GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account", ...}'
-export SMS_GATEWAY_KEY='...'
+flutter pub get
+flutter test
+flutter analyze
+flutter run
 ```
 
-See `.env.example` for non-secret defaults. The Google service account needs
-viewer access to the confirmation spreadsheet.
-
-## Verify the sender
-
-```bash
-porchfest-sms --check-device
-```
-
-The current InfiniReach relay is an Android device using
-`+15024685991`. InfiniReach rejects generic script user agents, so the client
-intentionally sends a browser user agent.
-
-## Preview a blast
-
-Dry run is the default and does not send anything:
-
-```bash
-porchfest-sms --message-file message.txt
-```
-
-Review the message, recipient count, invalid numbers, duplicates, and every
-selected artist before proceeding. `--limit N` can restrict the final list for
-a controlled test.
-
-## Send
-
-Use the exact count printed by the dry run:
-
-```bash
-porchfest-sms \
-  --message-file message.txt \
-  --campaign-id confirmed-artists-2026-07-23 \
-  --send \
-  --confirm-count 96
-```
-
-Choose a unique, stable `--campaign-id` for each blast. It becomes part of each
-message's external idempotency key. By default, sends are spaced 0.65 seconds
-apart to stay below the approximate 100-message/minute gateway limit.
-
-Do not send an artist blast until the message copy and live-send approval are
-explicitly provided.
-
-## Tests
-
-```bash
-python -m pip install pytest
-pytest
-```
-
-The tests mock network calls and never send SMS messages.
+Only Android is included because iOS does not permit apps to silently iterate
+and send SMS messages. Direct `SEND_SMS` permission is also restricted for apps
+distributed through Google Play; this tool is intended for controlled,
+sideloaded operational use.
