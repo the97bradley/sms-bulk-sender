@@ -1,7 +1,10 @@
 package com.denverporchfest.sms_bulk_sender
 
 import android.Manifest
+import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.OpenableColumns
 import android.telephony.SmsManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -11,6 +14,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingPickerResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -19,6 +23,7 @@ class MainActivity : FlutterActivity() {
             CHANNEL,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
+                "pickCsv" -> pickCsv(result)
                 "requestSmsPermission" -> requestSmsPermission(result)
                 "sendSms" -> {
                     val phoneNumber = call.argument<String>("phoneNumber")
@@ -27,6 +32,53 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    private fun pickCsv(result: MethodChannel.Result) {
+        if (pendingPickerResult != null) {
+            result.error("picker_pending", "A file picker is already open.", null)
+            return
+        }
+        pendingPickerResult = result
+        val intent =
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "text/*"
+                putExtra(
+                    Intent.EXTRA_MIME_TYPES,
+                    arrayOf("text/csv", "text/comma-separated-values", "text/plain"),
+                )
+            }
+        startActivityForResult(intent, CSV_PICKER_REQUEST)
+    }
+
+    @Deprecated("Uses the activity result callback supported by FlutterActivity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != CSV_PICKER_REQUEST) return
+
+        val result = pendingPickerResult
+        pendingPickerResult = null
+        if (resultCode != Activity.RESULT_OK || data?.data == null) {
+            result?.success(null)
+            return
+        }
+
+        try {
+            val uri = data.data!!
+            val name =
+                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { cursor ->
+                        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+                    } ?: "messages.csv"
+            val bytes =
+                contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalArgumentException("Could not read the selected file.")
+            result?.success(mapOf("name" to name, "bytes" to bytes))
+        } catch (error: Exception) {
+            result?.error("file_read_failed", error.message ?: "Could not read the CSV.", null)
         }
     }
 
@@ -100,5 +152,6 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "sms_bulk_sender/sms"
         private const val SMS_PERMISSION_REQUEST = 4701
+        private const val CSV_PICKER_REQUEST = 4702
     }
 }

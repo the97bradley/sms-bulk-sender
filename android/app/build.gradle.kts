@@ -25,7 +25,7 @@ android {
 
     defaultConfig {
         applicationId = "com.denverporchfest.sms_bulk_sender"
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

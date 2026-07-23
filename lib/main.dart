@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -57,20 +56,10 @@ class _SenderScreenState extends State<SenderScreen> {
   }
 
   Future<void> _pickCsv() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['csv'],
-      withData: true,
-    );
-    if (result == null || !mounted) return;
-
     try {
-      final file = result.files.single;
-      final bytes = file.bytes;
-      if (bytes == null) {
-        throw const FormatException('Could not read the selected file.');
-      }
-      final parsed = _parser.parse(utf8.decode(bytes));
+      final file = await _smsService.pickCsv();
+      if (file == null || !mounted) return;
+      final parsed = _parser.parse(utf8.decode(file.bytes));
       setState(() {
         _rows = parsed;
         _fileName = file.name;
@@ -82,11 +71,11 @@ class _SenderScreenState extends State<SenderScreen> {
         _fileName = null;
         _error = error.message;
       });
-    } on UnicodeDecodeError {
+    } on PlatformException catch (error) {
       setState(() {
         _rows = [];
         _fileName = null;
-        _error = 'The CSV must be UTF-8 encoded.';
+        _error = error.message ?? 'Could not read the selected file.';
       });
     }
   }
@@ -175,9 +164,7 @@ class _SenderScreenState extends State<SenderScreen> {
         });
       }
 
-      if (index < _rows.length - 1 &&
-          !_cancelRequested &&
-          delaySeconds > 0) {
+      if (index < _rows.length - 1 && !_cancelRequested && delaySeconds > 0) {
         await Future<void>.delayed(
           Duration(milliseconds: (delaySeconds * 1000).round()),
         );

@@ -26,9 +26,7 @@ class SmsCsvParser {
       final rowNumber = index + 1;
       final row = rows[index];
       if (row.length != 2) {
-        throw FormatException(
-          'Row $rowNumber must contain exactly 2 columns.',
-        );
+        throw FormatException('Row $rowNumber must contain exactly 2 columns.');
       }
 
       final rawPhone = '${row[0]}'.trim();
@@ -49,10 +47,8 @@ class SmsCsvParser {
     return messages;
   }
 
-  String _normalizeHeader(String value) => value
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[_\s]+'), ' ');
+  String _normalizeHeader(String value) =>
+      value.trim().toLowerCase().replaceAll(RegExp(r'[_\s]+'), ' ');
 
   String _normalizePhone(String value, int rowNumber) {
     if (!RegExp(r'^\+?[0-9().\s-]+$').hasMatch(value)) {
