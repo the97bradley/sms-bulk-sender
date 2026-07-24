@@ -33,8 +33,22 @@ The importer:
 6. Leave the app open until the queue finishes. Tap **Stop** to stop before the
    next row.
 
-Long messages are sent as multipart SMS. A green check means Android accepted
-the send request; it is not a carrier delivery receipt.
+The default delay is 10 seconds. Long messages are sent as multipart SMS, and
+every part must receive a successful callback before the row advances.
+
+Each row reports a specific state:
+
+- **Submitting:** waiting for Android's telephony callback.
+- **Carrier accepted:** the phone submitted every SMS part to the mobile
+  network without a reported radio, service, or rate-limit failure.
+- **Delivered:** the recipient network/device returned a delivery receipt.
+- **Delivery unconfirmed:** no receipt arrived within 10 minutes. Some carriers
+  do not support delivery reports, so this is not automatically a failure.
+- **Failed:** Android or the carrier returned an explicit submission or
+  delivery error.
+
+Carrier acceptance does not prevent downstream spam filtering, and a delivery
+receipt does not prove that a person read the message.
 
 ## Development
 

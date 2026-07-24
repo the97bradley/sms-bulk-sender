@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -41,18 +42,57 @@ class SenderScreen extends StatefulWidget {
 class _SenderScreenState extends State<SenderScreen> {
   final _parser = const SmsCsvParser();
   final _smsService = const SmsService();
-  final _delayController = TextEditingController(text: '2');
+  final _delayController = TextEditingController(text: '10');
 
   List<SmsRow> _rows = [];
+  StreamSubscription<SmsStatusEvent>? _statusSubscription;
   String? _fileName;
   String? _error;
   bool _isSending = false;
   bool _cancelRequested = false;
 
   @override
+  void initState() {
+    super.initState();
+    _statusSubscription = _smsService.statusEvents.listen(
+      _handleStatusEvent,
+      onError: (Object error) {
+        if (mounted) {
+          setState(() {
+            _error = 'SMS status listener failed: $error';
+          });
+        }
+      },
+    );
+  }
+
+  @override
   void dispose() {
+    _statusSubscription?.cancel();
     _delayController.dispose();
     super.dispose();
+  }
+
+  void _handleStatusEvent(SmsStatusEvent event) {
+    final index = _rows.indexWhere((row) => row.messageId == event.messageId);
+    if (index == -1 || !mounted) return;
+    final row = _rows[index];
+    setState(() {
+      switch (event.status) {
+        case 'delivered':
+          row.status = SmsRowStatus.delivered;
+          row.statusDetail = 'Recipient delivery confirmed';
+          row.error = null;
+        case 'deliveryUnconfirmed':
+          row.status = SmsRowStatus.deliveryUnconfirmed;
+          row.statusDetail = event.detail;
+        case 'deliveryFailed':
+          row.status = SmsRowStatus.failed;
+          row.error = event.detail ?? 'The carrier reported failed delivery.';
+        default:
+          row.statusDetail = event.detail ?? 'Unknown status: ${event.status}';
+      }
+    });
   }
 
   Future<void> _pickCsv() async {
@@ -142,25 +182,43 @@ class _SenderScreenState extends State<SenderScreen> {
       for (final row in _rows) {
         row.status = SmsRowStatus.pending;
         row.error = null;
+        row.messageId = null;
+        row.statusDetail = null;
       }
     });
 
+    final runId = DateTime.now().microsecondsSinceEpoch;
     for (var index = 0; index < _rows.length; index++) {
       if (_cancelRequested) break;
       final row = _rows[index];
-      setState(() => row.status = SmsRowStatus.sending);
+      final messageId = '$runId-$index';
+      setState(() {
+        row.messageId = messageId;
+        row.status = SmsRowStatus.submitting;
+        row.statusDetail = 'Waiting for carrier submission callback';
+      });
       try {
-        await _smsService.send(
+        final submission = await _smsService.send(
           phoneNumber: row.phoneNumber,
           message: row.message,
+          messageId: messageId,
         );
         if (!mounted) return;
-        setState(() => row.status = SmsRowStatus.sent);
+        setState(() {
+          if (row.status == SmsRowStatus.submitting) {
+            row.status = SmsRowStatus.carrierAccepted;
+            row.statusDetail =
+                'Carrier accepted ${submission.parts} SMS '
+                '${submission.parts == 1 ? 'part' : 'parts'}; '
+                'awaiting delivery report';
+          }
+        });
       } on PlatformException catch (error) {
         if (!mounted) return;
         setState(() {
           row.status = SmsRowStatus.failed;
           row.error = error.message ?? error.code;
+          row.statusDetail = null;
         });
       }
 
@@ -179,7 +237,16 @@ class _SenderScreenState extends State<SenderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sent = _rows.where((row) => row.status == SmsRowStatus.sent).length;
+    final accepted = _rows
+        .where(
+          (row) =>
+              row.status == SmsRowStatus.carrierAccepted ||
+              row.status == SmsRowStatus.deliveryUnconfirmed,
+        )
+        .length;
+    final delivered = _rows
+        .where((row) => row.status == SmsRowStatus.delivered)
+        .length;
     final failed = _rows
         .where((row) => row.status == SmsRowStatus.failed)
         .length;
@@ -237,7 +304,10 @@ class _SenderScreenState extends State<SenderScreen> {
                   ],
                   if (_rows.isNotEmpty) ...[
                     const SizedBox(height: 10),
-                    Text('Sent $sent · Failed $failed · Total ${_rows.length}'),
+                    Text(
+                      'Carrier accepted $accepted · Delivered $delivered · '
+                      'Failed $failed · Total ${_rows.length}',
+                    ),
                   ],
                 ],
               ),
@@ -264,11 +334,13 @@ class _SenderScreenState extends State<SenderScreen> {
                           leading: _StatusIcon(status: row.status),
                           title: Text(row.phoneNumber),
                           subtitle: Text(
-                            row.error == null
-                                ? row.message
-                                : '${row.message}\n${row.error}',
+                            [
+                              row.message,
+                              _statusLabel(row),
+                              if (row.error != null) row.error!,
+                            ].join('\n'),
                           ),
-                          isThreeLine: row.error != null,
+                          isThreeLine: true,
                         );
                       },
                     ),
@@ -294,6 +366,18 @@ class _SenderScreenState extends State<SenderScreen> {
   }
 }
 
+String _statusLabel(SmsRow row) {
+  final state = switch (row.status) {
+    SmsRowStatus.pending => 'Pending',
+    SmsRowStatus.submitting => 'Submitting to carrier…',
+    SmsRowStatus.carrierAccepted => 'Carrier accepted',
+    SmsRowStatus.deliveryUnconfirmed => 'Delivery unconfirmed',
+    SmsRowStatus.delivered => 'Delivered',
+    SmsRowStatus.failed => 'Failed',
+  };
+  return row.statusDetail == null ? state : '$state — ${row.statusDetail}';
+}
+
 class _StatusIcon extends StatelessWidget {
   const _StatusIcon({required this.status});
 
@@ -303,11 +387,22 @@ class _StatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return switch (status) {
       SmsRowStatus.pending => const Icon(Icons.schedule),
-      SmsRowStatus.sending => const SizedBox.square(
+      SmsRowStatus.submitting => const SizedBox.square(
         dimension: 20,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
-      SmsRowStatus.sent => const Icon(Icons.check_circle, color: Colors.green),
+      SmsRowStatus.carrierAccepted => const Icon(
+        Icons.outbox,
+        color: Colors.blue,
+      ),
+      SmsRowStatus.deliveryUnconfirmed => const Icon(
+        Icons.help,
+        color: Colors.orange,
+      ),
+      SmsRowStatus.delivered => const Icon(
+        Icons.check_circle,
+        color: Colors.green,
+      ),
       SmsRowStatus.failed => Icon(
         Icons.error,
         color: Theme.of(context).colorScheme.error,
