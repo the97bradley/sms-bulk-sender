@@ -67,7 +67,7 @@ class SmsService {
       {'phoneNumber': phoneNumber, 'message': message, 'messageId': messageId},
     );
     if (result == null) {
-      throw const PlatformException(
+      throw PlatformException(
         code: 'invalid_response',
         message: 'Android returned no send confirmation.',
       );
